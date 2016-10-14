@@ -12,3 +12,7 @@ Then:
 5. source checkout.sh
 6. rc find_package
 7. rc compile
+
+To run the code, just do:
+
+python run.py
