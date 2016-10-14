@@ -1,0 +1,1 @@
+root://atlprf01.slac.stanford.edu:11094//atlas/local/zengq/HHX/TRUTH/DAOD_TRUTH1.MC15.900002.MGPy8EG_A14N23LO_C1N2N1_GGMHinoh_130_noFilter.DAOD.root

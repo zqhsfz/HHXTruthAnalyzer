@@ -1,0 +1,7 @@
+AutoHists/
+xAODAnaHelpers/
+RootCoreBin/
+.RootCoreBin
+rcSetup.csh
+rcSetup.sh
+submitDir*/
