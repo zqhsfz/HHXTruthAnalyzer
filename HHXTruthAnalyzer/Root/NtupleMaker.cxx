@@ -136,16 +136,161 @@ EL::StatusCode NtupleMaker :: execute ()
 
   if(m_debug) Info("execute()", "Calling execute ...");
 
-   RETURN_CHECK("NtupleMaker::execute()", HelperFunctions::retrieve(m_eventInfo, "EventInfo", m_event, m_store, m_debug), "");
+  // obtain basic event information
+  m_eventInfo = 0;  
+  RETURN_CHECK("NtupleMaker::execute()", HelperFunctions::retrieve(m_eventInfo, "EventInfo", m_event, m_store, m_debug), "");
 
-   // Fill Ntuples
-   m_ntupleMaker->ResetBranches();
+  // obtain container of all truth particles
+  const xAOD::TruthParticleContainer* m_truthParticleContainer = 0;
+  RETURN_CHECK("NtupleMaker::execute()", HelperFunctions::retrieve(m_truthParticleContainer, "TruthParticles", m_event, m_store, m_debug), "");
+  if(m_truthParticleContainer == 0){
+    Warning("execute()", "Unable to get \"TruthParticles\" container! Current event will be skipped");
+    return EL::StatusCode::SUCCESS;
+  }
 
-   m_ntupleMaker->SetEventValue("runNumber", m_eventInfo->runNumber());
-   m_ntupleMaker->SetEventValue("eventNumber", m_eventInfo->eventNumber());
-   m_ntupleMaker->SetEventValue("channelNumber", m_eventInfo->mcChannelNumber());
+  // obtain list of neutralinos (sorted by pT)
+  std::vector<const xAOD::TruthParticle*> FinalNeutralinos;
+  for(auto truthParticle : *m_truthParticleContainer){
+    if( std::abs(truthParticle->pdgId()) == 1000022 ){
+      auto finalNeutralino = GetFinalState(truthParticle);
+      if(std::find(FinalNeutralinos.begin(), FinalNeutralinos.end(), finalNeutralino) == FinalNeutralinos.end()) 
+        FinalNeutralinos.push_back(finalNeutralino);
+    }
+  }
+  std::sort(FinalNeutralinos.begin(), FinalNeutralinos.end(), NtupleMaker::SortPt);
 
-   m_ntupleMaker->AutoFill();
+  if(FinalNeutralinos.size() != 2){
+    Warning("execute()", "Expect 2 neutralinos but only get %d! Current event will be skipped", int(FinalNeutralinos.size()));
+    return EL::StatusCode::SUCCESS;
+  }
+
+  // obtain list of Higgs/Gravitino from neutralino
+  std::vector<const xAOD::TruthParticle*> FinalHiggs;
+  std::vector<const xAOD::TruthParticle*> FinalGravitinos;
+  for(auto neutralino : FinalNeutralinos){
+    // get Higgs/Gravitino out of neutralino
+    const xAOD::TruthParticle* initHiggs = 0;
+    const xAOD::TruthParticle* initGravitino = 0;
+    for(unsigned int iChild = 0; iChild < neutralino->nChildren(); iChild++){
+      auto child = neutralino->child(iChild);
+
+      if( (initHiggs == 0) && (std::abs(child->pdgId()) == 25) ){
+        initHiggs = child;
+      }
+
+      if( (initGravitino == 0) && (std::abs(child->pdgId()) == 1000039) ){
+        initGravitino = child;
+      }
+    }
+
+
+    // sanity check
+    if(initHiggs == 0){
+      Warning("execute()", "Expect Higgs out of neutralino, but get none! This event will be skipped");
+      return EL::StatusCode::SUCCESS;
+    }
+
+    if(initGravitino == 0){
+      Warning("execute()", "Expect Gravitino out of neutralino, but get none! This event will be skipped");
+      return EL::StatusCode::SUCCESS;
+    }
+
+    // track to the last Higgs/Gravitino
+    auto finalHiggs = GetFinalState(initHiggs);
+    FinalHiggs.push_back(finalHiggs);
+
+    auto finalGravitino = GetFinalState(initGravitino);
+    FinalGravitinos.push_back(finalGravitino);
+  }
+
+  // obtain list of b-quarks out of Higgs decay
+  std::vector<std::vector<const xAOD::TruthParticle*> > InitialBquarks;
+  for(auto higgs : FinalHiggs){
+    std::vector<const xAOD::TruthParticle*> DecayedInitialBquarks;
+
+    if( (higgs->nChildren() != 2) || (std::abs(higgs->child(0)->pdgId()) != 5) || (std::abs(higgs->child(1)->pdgId()) != 5) ){
+      if(m_debug){ // Conclusion: This sample is inclusive Higgs decay (i.e. it can decay to any products)
+        Warning("execute()", "Expect H->bb decay, but get something else! This event will be skipped");
+
+        for(unsigned int iChild = 0; iChild < higgs->nChildren(); iChild++){
+          auto child = higgs->child(iChild);
+          std::cout << iChild << " : " << child->pdgId() << std::endl;
+        }
+      }
+      
+      return EL::StatusCode::SUCCESS;
+    }
+
+    DecayedInitialBquarks.push_back(higgs->child(0));
+    DecayedInitialBquarks.push_back(higgs->child(1));
+    std::sort(DecayedInitialBquarks.begin(), DecayedInitialBquarks.end(), NtupleMaker::SortPt);
+
+    InitialBquarks.push_back(DecayedInitialBquarks);
+  }
+
+  // Fill Ntuples
+  m_ntupleMaker->ResetBranches();
+
+  m_ntupleMaker->SetEventValue("runNumber", m_eventInfo->runNumber());
+  m_ntupleMaker->SetEventValue("eventNumber", m_eventInfo->eventNumber());
+  m_ntupleMaker->SetEventValue("channelNumber", m_eventInfo->mcChannelNumber());
+
+  m_ntupleMaker->SetEventValue("nNeutralinos", FinalNeutralinos.size());
+  m_ntupleMaker->SetEventValue("N1_Pt", FinalNeutralinos[0]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("N1_Eta", FinalNeutralinos[0]->eta());
+  m_ntupleMaker->SetEventValue("N1_Phi", FinalNeutralinos[0]->phi());
+  m_ntupleMaker->SetEventValue("N1_M", FinalNeutralinos[0]->m()/1000.);
+  m_ntupleMaker->SetEventValue("N1_E", FinalNeutralinos[0]->e()/1000.);
+  m_ntupleMaker->SetEventValue("N2_Pt", FinalNeutralinos[1]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("N2_Eta", FinalNeutralinos[1]->eta());
+  m_ntupleMaker->SetEventValue("N2_Phi", FinalNeutralinos[1]->phi());
+  m_ntupleMaker->SetEventValue("N2_M", FinalNeutralinos[1]->m()/1000.);
+  m_ntupleMaker->SetEventValue("N2_E", FinalNeutralinos[1]->e()/1000.);
+
+  m_ntupleMaker->SetEventValue("H1_Pt", FinalHiggs[0]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("H1_Eta", FinalHiggs[0]->eta());
+  m_ntupleMaker->SetEventValue("H1_Phi", FinalHiggs[0]->phi());
+  m_ntupleMaker->SetEventValue("H1_M", FinalHiggs[0]->m()/1000.);
+  m_ntupleMaker->SetEventValue("H1_E", FinalHiggs[0]->e()/1000.);
+  m_ntupleMaker->SetEventValue("H2_Pt", FinalHiggs[1]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("H2_Eta", FinalHiggs[1]->eta());
+  m_ntupleMaker->SetEventValue("H2_Phi", FinalHiggs[1]->phi());
+  m_ntupleMaker->SetEventValue("H2_M", FinalHiggs[1]->m()/1000.);
+  m_ntupleMaker->SetEventValue("H2_E", FinalHiggs[1]->e()/1000.);
+
+  m_ntupleMaker->SetEventValue("G1_Pt", FinalGravitinos[0]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("G1_Eta", FinalGravitinos[0]->eta());
+  m_ntupleMaker->SetEventValue("G1_Phi", FinalGravitinos[0]->phi());
+  m_ntupleMaker->SetEventValue("G1_M", FinalGravitinos[0]->m()/1000.);
+  m_ntupleMaker->SetEventValue("G1_E", FinalGravitinos[0]->e()/1000.);
+  m_ntupleMaker->SetEventValue("G2_Pt", FinalGravitinos[1]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("G2_Eta", FinalGravitinos[1]->eta());
+  m_ntupleMaker->SetEventValue("G2_Phi", FinalGravitinos[1]->phi());
+  m_ntupleMaker->SetEventValue("G2_M", FinalGravitinos[1]->m()/1000.);
+  m_ntupleMaker->SetEventValue("G2_E", FinalGravitinos[1]->e()/1000.);
+
+  m_ntupleMaker->SetEventValue("b11_Pt", InitialBquarks[0][0]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("b11_Eta", InitialBquarks[0][0]->eta());
+  m_ntupleMaker->SetEventValue("b11_Phi", InitialBquarks[0][0]->phi());
+  m_ntupleMaker->SetEventValue("b11_M", InitialBquarks[0][0]->m()/1000.);
+  m_ntupleMaker->SetEventValue("b11_E", InitialBquarks[0][0]->e()/1000.);
+  m_ntupleMaker->SetEventValue("b12_Pt", InitialBquarks[0][1]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("b12_Eta", InitialBquarks[0][1]->eta());
+  m_ntupleMaker->SetEventValue("b12_Phi", InitialBquarks[0][1]->phi());
+  m_ntupleMaker->SetEventValue("b12_M", InitialBquarks[0][1]->m()/1000.);
+  m_ntupleMaker->SetEventValue("b12_E", InitialBquarks[0][1]->e()/1000.);
+  m_ntupleMaker->SetEventValue("b21_Pt", InitialBquarks[1][0]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("b21_Eta", InitialBquarks[1][0]->eta());
+  m_ntupleMaker->SetEventValue("b21_Phi", InitialBquarks[1][0]->phi());
+  m_ntupleMaker->SetEventValue("b21_M", InitialBquarks[1][0]->m()/1000.);
+  m_ntupleMaker->SetEventValue("b21_E", InitialBquarks[1][0]->e()/1000.);
+  m_ntupleMaker->SetEventValue("b22_Pt", InitialBquarks[1][1]->pt()/1000.);
+  m_ntupleMaker->SetEventValue("b22_Eta", InitialBquarks[1][1]->eta());
+  m_ntupleMaker->SetEventValue("b22_Phi", InitialBquarks[1][1]->phi());
+  m_ntupleMaker->SetEventValue("b22_M", InitialBquarks[1][1]->m()/1000.);
+  m_ntupleMaker->SetEventValue("b22_E", InitialBquarks[1][1]->e()/1000.);
+
+  m_ntupleMaker->AutoFill();
 
   return EL::StatusCode::SUCCESS;
 }
@@ -207,7 +352,64 @@ bool NtupleMaker :: NtupleSvcInit(){
     "eventNumber",
     "channelNumber",
 
-    // etc ...
+    // neutralinos (final)
+    "nNeutralinos",
+    "N1_Pt",
+    "N1_Eta",
+    "N1_Phi",
+    "N1_M",
+    "N1_E",
+    "N2_Pt",
+    "N2_Eta",
+    "N2_Phi",
+    "N2_M",
+    "N2_E",
+
+    // Higgs (final)
+    "H1_Pt",
+    "H1_Eta",
+    "H1_Phi",
+    "H1_M",
+    "H1_E",
+    "H2_Pt",
+    "H2_Eta",
+    "H2_Phi",
+    "H2_M",
+    "H2_E",
+
+    // Gravitino (final)
+    "G1_Pt",
+    "G1_Eta",
+    "G1_Phi",
+    "G1_M",
+    "G1_E",
+    "G2_Pt",
+    "G2_Eta",
+    "G2_Phi",
+    "G2_M",
+    "G2_E",
+
+    // b-quarks out of Higgs decay (initial)
+    "b11_Pt",
+    "b11_Eta",
+    "b11_Phi",
+    "b11_M",
+    "b11_E",
+    "b12_Pt",
+    "b12_Eta",
+    "b12_Phi",
+    "b12_M",
+    "b12_E",
+    "b21_Pt",
+    "b21_Eta",
+    "b21_Phi",
+    "b21_M",
+    "b21_E",
+    "b22_Pt",
+    "b22_Eta",
+    "b22_Phi",
+    "b22_M",
+    "b22_E",
   };
 
   m_ntupleMaker->SetEventVariableList(EventVariableList);
@@ -218,5 +420,20 @@ bool NtupleMaker :: NtupleSvcInit(){
   }
 
   return true;
+}
+
+const xAOD::TruthParticle* NtupleMaker :: GetFinalState(const xAOD::TruthParticle* initParticle){
+  int abspdgId = std::abs(initParticle->pdgId());
+
+  int nChild = initParticle->nChildren();
+  for(int iChild = 0; iChild < nChild; iChild++){
+    auto child = initParticle->child(iChild);
+    
+    if(std::abs(child->pdgId()) != abspdgId) continue;
+
+    return GetFinalState(child);
+  }
+
+  return initParticle;
 }
 

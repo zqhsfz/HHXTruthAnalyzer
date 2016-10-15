@@ -15,6 +15,7 @@
 
 // EDM includes
 #include "xAODEventInfo/EventInfo.h"
+#include "xAODTruth/TruthParticleContainer.h"
 
 class NtupleMaker : public EL::Algorithm
 {
@@ -59,6 +60,10 @@ public:
 
   // initialization functions
   bool NtupleSvcInit();
+
+  // utils
+  static bool SortPt(const xAOD::IParticle* p1, const xAOD::IParticle* p2) { return p1->pt() > p2->pt(); }
+  const xAOD::TruthParticle* GetFinalState(const xAOD::TruthParticle* initParticle);
 
   // this is needed to distribute the algorithm to the workers
   ClassDef(NtupleMaker, 1);
